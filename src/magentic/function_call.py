@@ -8,7 +8,7 @@ from collections.abc import (
     Iterable,
     Iterator,
 )
-from typing import Any, Generic, ParamSpec, TypeVar, cast
+from typing import Any, Generic, ParamSpec, TypeVar
 from uuid import uuid4
 
 from magentic.logger import logfire
@@ -98,22 +98,21 @@ class AsyncParallelFunctionCall(Generic[T]):
 
     async def __call__(self) -> tuple[T, ...]:
         with logfire.span("Executing async parallel function call"):
-            tasks_and_results: list[asyncio.Task[T] | T] = []
+            tasks_and_results: list[asyncio.Future[T] | T] = []
             async for function_call in self._function_calls:
                 result = function_call()
-                if inspect.iscoroutine(result):
-                    tasks_and_results.append(asyncio.create_task(result))
+                if inspect.isawaitable(result):
+                    tasks_and_results.append(asyncio.ensure_future(result))
                 else:
-                    result = cast(T, result)
                     tasks_and_results.append(result)
 
             tasks = [
-                task for task in tasks_and_results if isinstance(task, asyncio.Task)
+                task for task in tasks_and_results if isinstance(task, asyncio.Future)
             ]
             await asyncio.gather(*tasks)
             results = [
                 task_or_result.result()
-                if isinstance(task_or_result, asyncio.Task)
+                if isinstance(task_or_result, asyncio.Future)
                 else task_or_result
                 for task_or_result in tasks_and_results
             ]
