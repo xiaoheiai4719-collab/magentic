@@ -98,25 +98,21 @@ class AsyncParallelFunctionCall(Generic[T]):
 
     async def __call__(self) -> tuple[T, ...]:
         with logfire.span("Executing async parallel function call"):
-            tasks_and_results: list[asyncio.Future[T] | T] = []
+            results: dict[int, T] = {}
+            tasks: dict[int, asyncio.Future[T]] = {}
             async for function_call in self._function_calls:
+                index = len(results) + len(tasks)
                 result = function_call()
                 if inspect.isawaitable(result):
-                    tasks_and_results.append(asyncio.ensure_future(result))
+                    tasks[index] = asyncio.ensure_future(result)
                 else:
-                    tasks_and_results.append(result)
+                    results[index] = result
 
-            tasks = [
-                task for task in tasks_and_results if isinstance(task, asyncio.Future)
-            ]
-            await asyncio.gather(*tasks)
-            results = [
-                task_or_result.result()
-                if isinstance(task_or_result, asyncio.Future)
-                else task_or_result
-                for task_or_result in tasks_and_results
-            ]
-            return tuple(results)
+            # Only values scheduled above are awaited, never synchronous results.
+            results.update(
+                zip(tasks, await asyncio.gather(*tasks.values()), strict=True)
+            )
+            return tuple(results[index] for index in range(len(results)))
 
     async def __aiter__(self) -> AsyncIterator[FunctionCall[Awaitable[T] | T]]:
         async for function_call in self._function_calls:
